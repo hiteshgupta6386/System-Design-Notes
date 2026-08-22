@@ -1,0 +1,445 @@
+Question 
+Design a Scalable Subscription Validation System with a Third-Party API Rate Limit of 40 RPM
+
+Senario : 
+We have one financial Application which basically used for creating various subscriptions, user subscriptions information and everything. 
+This is a 3rd party application and these app only allows 40 requests per minute to be mase for any typr of entitlemnt checks and subscription checks. 
+Now my application say monster.com it has many users like thousands of paid users who has subscriptions and whenever the page are logging i need 
+to meake this call to the downstream 3rd party vendor and those are way more exceeding the 40 limits said by the vendor. So how will you takle this equation?
+
+Solution: The key point is: you should not call the third-party system on every page load. 
+          You need to put a cache + asynchronous refresh + distributed rate limiter in front of it.
+
+
+Recommended architecture: 
+
+|-----------------------------------------------------------------------|
+                    Thousands of Users
+                           |
+                           v
+                    +-------------+
+                    | API Gateway |
+                    +-------------+
+                           |
+                           v
+                  +------------------+
+                  | Subscription     |
+                  | Service          |
+                  +------------------+
+                     |            |
+                  Cache          Queue
+                  Redis       (Kafka/SQS)
+                     |            |
+                     |            v
+                     |     +----------------+
+                     |     | Rate Limited  |
+                     |     | Worker Pool    |
+                     |     +----------------+
+                     |            |
+                     |            | max 40/min
+                     |            v
+                     |     +----------------+
+                     +---->| 3rd Party     |
+                           | Financial App  |
+                           +----------------+
+
+|-----------------------------------------------------------------------|
+
+1. First question: Does subscription data really need to be real-time?
+
+Suppose user U123 logs in.
+
+Instead of:
+|---------------------------------|
+User Login
+   ↓
+Call 3rd Party
+   ↓
+Get subscription
+   ↓
+Return response
+|---------------------------------|
+
+do:
+|---------------------------------|
+User Login
+   ↓
+Check Redis
+   ↓
+Subscription exists?
+   ↓
+YES → Return immediately
+|---------------------------------|
+
+For example:
+|---------------------------------|
+subscription:U123
+    status = ACTIVE
+    plan = PREMIUM
+    expiry = 2026-12-31
+    lastUpdated = 10:31:20
+|---------------------------------|
+
+Now 10,000 users logging in doesn't mean 10,000 calls to the vendor.
+
+It means potentially:
+|---------------------------------------|
+10,000 requests
+       ↓
+Redis
+       ↓
+Only a small number of vendor calls
+|----------------------------------------|
+
+Redis is commonly used for distributed caching/rate limiting because it provides very low-latency shared state across application instances.
+
+2. Cache the subscription information
+
+I'd use something like:
+|----------------------------------------|
+Redis
+
+Key:
+subscription:{userId}
+
+Value:
+{
+   userId: "U123",
+   subscriptionId: "SUB456",
+   status: "ACTIVE",
+   plan: "PREMIUM",
+   expiry: "2026-12-31"
+}
+
+TTL:
+5 minutes / 15 minutes / 1 hour
+|----------------------------------------|
+The exact TTL depends on the business requirement.
+
+For example, if subscription changes don't need to reflect immediately:
+
+TTL = 15 minutes
+
+Then 1,000 page loads from the same user during those 15 minutes require zero third-party calls.
+
+3. But what if cache expires for thousands of users?
+
+This is where many designs fail.
+
+Imagine:
+|----------------------------------------------|
+10:00 AM
+
+10,000 cache entries expire
+
+        ↓
+
+10,000 requests
+
+        ↓
+
+10,000 calls to vendor
+
+        ↓
+
+Vendor allows only 40/min
+
+        ↓
+
+BOOM
+|----------------------------------------------|
+
+This is called a cache stampede/thundering herd.
+
+So you need request coalescing + controlled refresh.
+
+For example:
+|------------------------------------------------------------|
+                    Redis
+                      |
+             subscription exists?
+                /           \
+              YES            NO
+               |              |
+             return        acquire lock
+                              |
+                     already refreshing?
+                         /          \
+                       YES           NO
+                        |             |
+                     wait         call queue
+                                      |
+                                      v
+                              3rd Party API
+|------------------------------------------------------------|
+Only one request should refresh a particular user's subscription at a time.
+
+4. Introduce a Queue
+
+This is the most important part for your scenario.
+
+Don't make every request synchronously call the vendor.
+
+Instead:
+|------------------------------------------------------------|
+Application
+     |
+     | subscription needs refresh
+     v
+ Kafka / SQS / RabbitMQ
+     |
+     v
+Subscription Worker
+     |
+     v
+Rate Limiter
+     |
+     v
+Third Party
+|------------------------------------------------------------|
+
+Now your worker controls exactly how many calls go to the vendor.
+
+5. Enforce the 40 requests/minute limit
+
+You know:
+
+Vendor limit = 40 requests/minute
+
+So configure your distributed rate limiter slightly below that, for example:
+
+35 requests/minute
+
+rather than exactly 40, to leave some safety margin.
+
+You can implement the limiter using a Redis-backed token bucket. Redis documents token-bucket implementations specifically for distributed rate limiting, including atomic Lua-script based updates to prevent concurrent requests from bypassing the limit.
+
+Conceptually:
+|------------------------------------------------------------|
+Token Bucket
+
+Capacity = 40
+Refill = 40 tokens/minute
+
+Worker asks:
+    "Can I consume 1 token?"
+
+YES → call vendor
+
+NO → wait
+|------------------------------------------------------------|
+With multiple application/worker instances, the rate limiter must be shared, not an in-memory counter on each JVM. Otherwise:
+|------------------------------------------------------------|
+Server 1 → 40 calls
+Server 2 → 40 calls
+Server 3 → 40 calls
+
+Total = 120 calls
+|------------------------------------------------------------|
+and you've violated the vendor's 40/minute limit.
+
+A centralized Redis limiter avoids that problem.
+
+6. Even better: proactive refresh
+
+For subscription data, I wouldn't wait for users to log in.
+
+Suppose you have:
+
+1 million paid users
+
+You could maintain:
+
+User → subscription data → lastSyncedAt
+
+Then periodically refresh only the users whose data is becoming stale.
+
+For example:
+|------------------------------------------------------------|
+Subscription expires/stale
+             ↓
+       Kafka topic
+             ↓
+     Subscription Worker
+             ↓
+       Rate Limiter
+             ↓
+      35 calls/minute
+             ↓
+       Third Party
+             ↓
+          Redis
+|------------------------------------------------------------|
+At 35 calls/minute:
+
+35 × 60 = 2,100 calls/hour
+2,100 × 24 = 50,400 calls/day
+
+So you can determine whether the vendor's quota is sufficient to maintain the required freshness.
+
+7. Very important: Webhook/event support
+
+Before designing all of this, I would ask the third-party vendor:
+
+Do you provide webhooks/events when a subscription is created, cancelled, renewed, upgraded, or downgraded?
+
+If YES, that's much better.
+
+Instead of:
+|------------------------------------------------------------|
+Our application
+     ↓
+Poll vendor repeatedly
+|------------------------------------------------------------|
+you get:
+|------------------------------------------------------------|
+Third Party
+     |
+     | Subscription changed
+     v
+Webhook
+     |
+     v
+Our Subscription Service
+     |
+     v
+Redis + Database
+|------------------------------------------------------------|
+Then your application doesn't need to continuously poll.
+
+8. Database as source of truth + Redis as fast cache
+
+I wouldn't make Redis the only place where subscription information exists.
+
+I'd use:
+|------------------------------------------------------------|
+              Subscription Service
+                       |
+               +-------+-------+
+               |               |
+               v               v
+             Redis          Database
+            (cache)       (persistent)
+|------------------------------------------------------------|
+For example:
+|------------------------------------------------------------|
+PostgreSQL
+
+user_id
+subscription_id
+status
+plan
+expiry
+last_synced_at
+version
+|------------------------------------------------------------|
+
+Redis:
+
+subscription:{userId}
+
+So if Redis goes down, you still have the database.
+
+9. What happens when vendor is unavailable?
+
+You also need a Circuit Breaker.
+|------------------------------------------------------------|
+Application
+     |
+     v
+Subscription Service
+     |
+     v
+Circuit Breaker
+     |
+     v
+Third Party
+|------------------------------------------------------------|
+If the vendor starts returning:
+|------------------------------------------------------------|
+429
+429
+429
+500
+500
+500
+|------------------------------------------------------------|
+stop hammering the vendor.
+|------------------------------------------------------------|
+CLOSED
+   ↓ failures
+OPEN
+   ↓
+don't call vendor
+   ↓
+serve cached data
+   ↓
+after cooldown
+   ↓
+HALF OPEN
+   ↓
+test request
+|------------------------------------------------------------|
+This prevents your retry mechanism from making the situation even worse.
+
+10. What about a new user?
+
+This is where you need a business decision.
+
+Suppose:
+|------------------------------------------------------------|
+User logs in
+   ↓
+No subscription data in cache/database
+|------------------------------------------------------------|
+You have two choices.
+|------------------------------------------------------------|
+
+Option A — Synchronous
+
+Login
+ ↓
+Check cache
+ ↓
+MISS
+ ↓
+Wait for vendor
+ ↓
+Return subscription
+|------------------------------------------------------------|
+But this is dangerous because 1,000 simultaneous new users could generate 1,000 vendor calls.
+
+
+Option B — Asynchronous
+|------------------------------------------------------------|
+Login
+ ↓
+No data
+ ↓
+Create refresh request
+ ↓
+Queue
+ ↓
+Return "subscription verification pending"
+|------------------------------------------------------------|
+Then worker processes:
+|------------------------------------------------------------|
+Queue
+ ↓
+Rate limiter
+ ↓
+Vendor
+ ↓
+Database
+ ↓
+Redis
+|------------------------------------------------------------|
+For a large-scale system, Option B is safer.
+
+
+In Short: 
+I would decouple the user-facing subscription check from the third-party API. I would maintain subscription state in our own database and use Redis as 
+a low-latency cache. Page requests would primarily read from Redis rather than calling the third party. Subscription synchronization would happen asynchronously 
+through Kafka/SQS, and a centralized Redis-backed token-bucket rate limiter would ensure that all worker instances collectively stay below the vendor's 40 
+requests-per-minute limit. I would also use request coalescing to prevent cache stampedes, a circuit breaker for vendor failures, 
+retries with exponential backoff for transient failures, and preferably vendor webhooks to receive subscription changes rather than polling.
