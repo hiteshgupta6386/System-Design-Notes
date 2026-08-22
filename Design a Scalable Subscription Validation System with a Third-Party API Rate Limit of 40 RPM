@@ -1,7 +1,7 @@
 Question 
 Design a Scalable Subscription Validation System with a Third-Party API Rate Limit of 40 RPM
 
-Senario : 
+Scenario : 
 We have one financial Application which basically used for creating various subscriptions, user subscriptions information and everything. 
 This is a 3rd party application and these app only allows 40 requests per minute to be mase for any typr of entitlemnt checks and subscription checks. 
 Now my application say monster.com it has many users like thousands of paid users who has subscriptions and whenever the page are logging i need 
