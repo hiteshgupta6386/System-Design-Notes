@@ -1,0 +1,96 @@
+1. Why API Latency Matters:
+For APIs, especially payment gateway APIs such as Stripe/Razorpay, latency is a critical performance metric.
+
+An API may depend on:
+|--------------------------------------|
+Client
+  ↓
+Our API
+  ↓
+Database / Cache
+  ↓
+Third-Party API / Bank
+  ↓
+Response
+|--------------------------------------|
+
+A slow downstream dependency can increase the overall API response time and affect user experience.
+
+Latency metrics help us understand:
+|--------------------------------------|
+How fast our API responds
+How many requests are slow
+Whether downstream services are causing bottlenecks
+Whether we need to scale or optimize
+Whether we are meeting our API SLA
+|--------------------------------------|
+
+2. What is Percentile Latency?
+
+Percentile latency tells us the response time within which a certain percentage of requests complete.
+
+a) P50
+
+P50 = 50th percentile
+
+Example:
+
+P50 = 80 ms
+
+Means: 50% of requests completed in 80 ms or less, and the remaining 50% took longer.
+
+P50 is roughly the median latency.
+
+b) P90
+
+P90 = 90th percentile
+
+Example:
+
+P90 = 90 ms
+
+Means: 90% of requests completed in 90 ms or less, while the slowest 10% of requests took longer than 90 ms.
+
+c) P95
+
+P95 = 95th percentile
+
+Example:
+
+P95 = 95 ms
+
+Means: 95% of requests completed in 95 ms or less, while the slowest 5% took longer.
+
+d) P99
+
+P99 = 99th percentile
+
+Example:
+
+P99 = 100 ms
+
+Means: 99% of requests completed in 100 ms or less, while the slowest 1% took longer.
+
+For high-scale systems, P99 is particularly useful because even a small percentage of slow requests can represent thousands of users.
+
+3. P50 vs P90 vs P95 vs P99
+
+
+Requests
+|
+|------------------------------------------------------------|
+0%       50%          90%          95%                99%  100%
+         |             |            |                  |
+        P50           P90          P95                P99
+         |             |            |                  |
+       80 ms         90 ms        95 ms              100 ms
+
+
+Example:
+
+| Metric  | Latency | Meaning               |
+| ------- | ------: | --------------------- |
+| P50     |   80 ms | 50% requests ≤ 80 ms  |
+| P90     |   90 ms | 90% requests ≤ 90 ms  |
+| P95     |   95 ms | 95% requests ≤ 95 ms  |
+| P99     |  100 ms | 99% requests ≤ 100 ms |
