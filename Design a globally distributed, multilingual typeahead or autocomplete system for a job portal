@@ -1,0 +1,485 @@
+Design a globally distributed, multilingual typeahead/autocomplete system for a job portal like Monster.com
+
+Scenario:
+When a user searches for a job role such as “Software Engineer”, the system should provide relevant job-role suggestions in real time as the user types.
+Since the platform operates across multiple countries, users may search in different languages. For example, the same job role may have different names or translations 
+in different countries.
+The system should support high request volume, multilingual search, low latency, high availability, and a responsive user experience, with suggestions returned 
+within a few milliseconds wherever possible.
+
+Example:
+
+A user in the US types: soft
+
+Suggestions:
+Software Engineer
+Software Developer
+Software Architect
+
+A user in Germany may type the equivalent local term and expect:
+Softwareentwickler
+Software Engineer
+Softwarearchitekt
+
+The system should understand the language/locale and user context and return appropriate suggestions.
+
+
+========= Solutions:
+
+How I would design it
+As a senior Java/backend engineer, I would not call the database for every keystroke.
+
+The key architecture would be:
+|---------------------------------------------------------|
+                    Global Users
+                         |
+                    CDN / Edge
+                         |
+                Global Load Balancer
+                         |
+              +----------+----------+
+              |                     |
+          US Region             EU Region
+              |                     |
+       Typeahead Service     Typeahead Service
+              |                     |
+           Redis                 Redis
+              |                     |
+       Search Index          Search Index
+       Elasticsearch         Elasticsearch
+              |
+        Job Role Dataset
+|---------------------------------------------------------|
+
+Request flow:
+
+User types:
+|---------------------------|
+s
+↓
+so
+↓
+sof
+↓
+soft
+|---------------------------|
+
+Each keystroke can generate a request.
+
+So instead of:
+
+soft → Database
+
+we want:
+|---------------------------|
+soft
+ ↓
+Redis
+ ↓
+[Software Engineer,
+ Software Developer,
+ Software Architect]
+|---------------------------|
+This makes the response extremely fast.
+
+1. Debouncing on the frontend
+
+This is the first optimization.
+
+Don't send a request for every keystroke.
+
+Instead:
+|-----------------------------------|
+User types:
+
+s → no API
+so → no API
+sof → no API
+soft → wait 100–200 ms
+          ↓
+       API call
+|-----------------------------------|
+For example:
+
+debounce(search, 150ms)
+
+This can dramatically reduce unnecessary requests.
+
+2. Minimum characters
+
+Don't search when the user types only:
+
+s
+
+or:
+
+so
+
+You might start searching after 2 or 3 characters.
+|-----------------------------------|
+s       → no request
+so      → maybe no request
+sof     → search
+soft    → search
+|-----------------------------------|
+
+This reduces load significantly.
+
+3. Redis for hot suggestions
+
+This is one of the most important parts.
+
+For popular prefixes:
+|-----------------------------------|
+soft
+softw
+softwa
+|-----------------------------------|
+store precomputed results.
+
+Example:
+|-----------------------------------|
+Key:
+typeahead:en:soft
+
+Value:
+[
+  "Software Engineer",
+  "Software Developer",
+  "Software Architect",
+  "Software Engineering Manager"
+]
+|-----------------------------------|
+
+Then:
+|-----------------------------------|
+Request
+   ↓
+Redis
+   ↓
+Response
+|-----------------------------------|
+Redis can respond in sub-millisecond to low-millisecond range in appropriate deployments.
+
+4. Don't store every possible string manually
+
+You could have millions of job titles.
+
+Instead, maintain a search index.
+
+For example:
+
+Elasticsearch/OpenSearch
+|-----------------------------------|
+Job Title
+---------
+Software Engineer
+Software Developer
+Senior Software Engineer
+Software Engineering Manager
+Java Developer
+Backend Engineer
+|-----------------------------------|
+
+The search index handles:
+
+Prefix matching
+Fuzzy matching
+Ranking
+Tokenization
+Language analyzers
+Synonyms
+
+5. Multilingual architecture
+
+This is where your problem becomes more interesting.
+
+I wouldn't simply translate every request dynamically.
+
+For example:
+|-----------------------------------|
+English:
+
+Software Engineer
+|-----------------------------------|
+
+could have localized equivalents:
+|-----------------------------------|
+English → Software Engineer
+German  → Softwareentwickler
+French  → Ingénieur logiciel
+Spanish → Ingeniero de software
+|-----------------------------------|
+
+I'd maintain a canonical job-role ID.
+|-----------------------------------|
+role_id = 12345
+
+English:
+Software Engineer
+
+German:
+Softwareentwickler
+
+French:
+Ingénieur logiciel
+
+Spanish:
+Ingeniero de software
+|-----------------------------------|
+
+Now all translations refer to the same canonical role.
+
+6. Locale-aware search
+
+The request should contain locale information:
+|------------------------------------------------------|
+GET /typeahead?q=soft&locale=en-US
+|------------------------------------------------------|
+or:
+
+|------------------------------------------------------|
+GET /typeahead?q=software&locale=de-DE
+|------------------------------------------------------|
+
+The service can select the appropriate index/analyzer:
+
+|------------------------------------------------------|
+en-US → English index
+de-DE → German index
+fr-FR → French index
+es-ES → Spanish index
+|------------------------------------------------------|
+
+Potential architecture:
+|------------------------------------------------------|
+                 Typeahead Service
+                        |
+                   Detect Locale
+                        |
+        +---------------+---------------+
+        |               |               |
+      English         German          French
+       Index           Index            Index
+|------------------------------------------------------|
+For very large scale, these indexes can be distributed geographically.
+
+7. Precompute popular prefixes
+
+This is where you can make the system really fast.
+
+Suppose your data contains:
+|------------------------------------------------------|
+Software Engineer
+Software Developer
+Software Architect
+|------------------------------------------------------|
+
+During an offline processing job, generate:
+|------------------------------------------------------|
+s
+so
+sof
+soft
+softw
+softwa
+software
+software e
+...
+|------------------------------------------------------|
+and associate them with ranked suggestions.
+
+Then:
+|-----------------------------|
+soft
+ ↓
+Redis
+ ↓
+Top 10 results
+|-----------------------------|
+
+No expensive search operation is required for popular prefixes.
+
+This is essentially a precomputed typeahead index.
+
+8. Ranking
+
+You don't just want matching results.
+
+You want the best results.
+
+For example:
+|-----------------------------|
+User types:
+
+java
+|-----------------------------|
+Instead of alphabetically:
+|-----------------------------|
+Java Architect
+Java Developer
+Java Engineer
+Java Programmer
+|-----------------------------|
+you could rank based on:
+|-----------------------------|
+Popularity
++
+Country
++
+Language
++
+Historical searches
++
+User context
++
+Recent trends
+|-----------------------------|
+
+Result:
+|-----------------------------|
+1. Java Developer
+2. Java Software Engineer
+3. Senior Java Developer
+4. Java Architect
+|-----------------------------|
+
+9. CDN / Edge caching
+
+Because Monster-like traffic is global, I'd also consider edge caching for extremely popular/static suggestions.
+|-----------------------------|
+India user
+     ↓
+India Edge
+     ↓
+Typeahead service
+
+US user
+     ↓
+US Edge
+     ↓
+Typeahead service
+|-----------------------------|
+This reduces network latency.
+
+10. Multi-region deployment
+
+For a global application:
+|----------------------------------------------------|
+             Global DNS
+                  |
+       +----------+----------+
+       |          |          |
+      US         EU         APAC
+       |          |          |
+     Redis      Redis      Redis
+       |          |          |
+     Search     Search     Search
+|----------------------------------------------------|
+Users should ideally be routed to the nearest region.
+
+This reduces:  Network latency
+
+and improves the "snappy" experience.
+
+11. What happens when a new job role is added?
+
+Don't manually update Redis.
+
+Use an event-driven pipeline:
+|----------------------------------------------------|
+Admin / Job System
+       |
+       v
+    Kafka
+       |
+       v
+Indexing Service
+       |
+       +----> Elasticsearch
+       |
+       +----> Redis
+|----------------------------------------------------|
+For example:
+
+"Generative AI Engineer"
+
+is added.
+
+Event:
+
+JOB_ROLE_CREATED
+
+Kafka publishes the event.
+
+Indexing service updates:
+|----------------------------------------------------|
+Search Index
+Redis
+|----------------------------------------------------|
+
+Final architecture
+
+I'd present it as like this:
+|----------------------------------------------------|
+                         GLOBAL USERS
+                              |
+                       CDN / Edge Cache
+                              |
+                     Global Load Balancer
+                              |
+                  +-----------+-----------+
+                  |                       |
+              Region A                 Region B
+                  |                       |
+          Typeahead Service       Typeahead Service
+                  |                       |
+              Redis Cache              Redis Cache
+                  |                       |
+          Search Index             Search Index
+       (OpenSearch/ES)          (OpenSearch/ES)
+                  ^
+                  |
+             Kafka Events
+                  ^
+                  |
+          Job Role / Master Data
+|----------------------------------------------------|
+
+Request path
+|----------------------------------------------------|
+User types "soft"
+       ↓
+Frontend debounce 150ms
+       ↓
+Typeahead API
+       ↓
+Redis
+       |
+       +---- HIT → return suggestions
+       |
+       +---- MISS
+              ↓
+        Search Index
+              ↓
+        Return + cache
+|----------------------------------------------------|
+
+Data update path
+|----------------------------------------------------|
+Job Role Master
+      ↓
+Kafka
+      ↓
+Indexing Service
+      ↓
+Search Index
+      ↓
+Redis
+|----------------------------------------------------|
+
+
+
+In Short:
+For a globally distributed typeahead system, I would keep the synchronous request path extremely lightweight: debounce on the client, route to the nearest region, serve hot prefixes 
+from Redis, and fall back to a locale-aware search index. The expensive indexing, translation and ranking work should happen asynchronously.
