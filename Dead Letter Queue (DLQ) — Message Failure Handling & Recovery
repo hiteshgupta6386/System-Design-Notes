@@ -1,0 +1,173 @@
+Dead Letter Queue (DLQ) — Message Failure Handling & Recovery
+
+Dead Letter Queue (DLQ)
+
+1. What is DLQ?
+
+DLQ = Dead Letter Queue
+
+A Dead Letter Queue is a separate queue used to store messages that repeatedly fail to be processed successfully by a consumer.
+It is commonly used in messaging systems such as Kafka, RabbitMQ, AWS SQS, etc.
+
+2. Why do we need DLQ?
+
+Consider an Order and Payment system:
+|---------------------------------|
+Order Service
+     |
+     | Order Created Event
+     ↓
+   Queue
+     |
+     ↓
+Payment Service
+|---------------------------------|
+
+Suppose a poison message arrives.
+A poison message: is a message that continuously fails processing because of some issue, for example:
+
+|---------------------------------|
+Invalid data
+Incorrect message format
+Missing required field
+Downstream service failure
+Business validation failure
+Unexpected application error
+|---------------------------------|
+
+3. Problem Without DLQ
+
+Suppose the queue contains:
+|---------------------------------|
+Message 1 → Success
+Message 2 → Success
+Message 3 → ❌ Failure
+Message 4 → Pending
+Message 5 → Pending
+|---------------------------------|
+
+If Message 3 is continuously retried:
+|---------------------------------|
+Message 3
+   ↓
+Retry
+   ↓
+Failure
+   ↓
+Retry
+   ↓
+Failure
+   ↓
+Retry
+   ↓
+Failure
+   ↓
+...
+|---------------------------------|
+
+This can cause problems:
+
+The same message consumes resources repeatedly.
+Other messages may be delayed.
+Consumer processing can get blocked.
+The system can waste CPU/network resources.
+The queue can keep growing.
+
+4. How DLQ Solves the Problem
+
+Configure a maximum number of retries.
+For example: Max retries = 3
+
+Processing flow:
+|---------------------------------|
+Message
+   ↓
+Consumer
+   ↓
+Failure
+   ↓
+Retry 1
+   ↓
+Failure
+   ↓
+Retry 2
+   ↓
+Failure
+   ↓
+Retry 3
+   ↓
+Failure
+   ↓
+Move to DLQ
+|---------------------------------|
+
+Then:
+|------------------------------------------|
+Main Queue                 DLQ
+    |                       |
+    ↓                       ↓
+Normal messages        Failed messages
+|------------------------------------------|
+The failed message is now isolated from normal processing.
+
+5. DLQ Processing
+
+Once a message reaches the DLQ:
+|------------------------------------------|
+                 DLQ
+                  |
+                  ↓
+             Monitor/Alert
+                  |
+                  ↓
+            Investigate Cause
+                  |
+                  ↓
+               Fix Issue
+                  |
+                  ↓
+             Reprocess Message
+|------------------------------------------|
+
+For example:
+|------------------------------------------|
+Payment message
+      ↓
+Failed 3 times
+      ↓
+DLQ
+      ↓
+Find downstream payment service issue
+      ↓
+Fix issue
+      ↓
+Reprocess message
+      ↓
+Payment successful
+|------------------------------------------|
+
+6. Important Benefits
+
+a) Isolation : Failed messages don't continuously interfere with normal messages.
+
+b) Monitoring : DLQ can be monitored separately.
+|------------------------------------------|
+Example metrics:
+
+DLQ message count
+DLQ growth rate
+Oldest message age
+Processing failures
+|------------------------------------------|
+
+c) Recovery : After fixing the underlying issue, messages can be reprocessed.
+
+d) Prevents Infinite Retries:
+
+Instead of:
+
+Retry → Retry → Retry → Retry → ...
+
+we use:
+
+Retry → Retry → Retry → DLQ
