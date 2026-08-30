@@ -1,0 +1,250 @@
+Optimistic vs Pessimistic Locking – Concurrency
+
+1. Concurrency Problem : Concurrency occurs when multiple requests access or modify the same data at the same time.
+
+Example – Bank Account
+
+Initial balance:
+
+Balance = ₹10,000
+
+Two concurrent requests:
+|--------------------------------------------|
+Request A → Withdraw ₹3,000
+Request B → Withdraw ₹5,000
+|--------------------------------------------|
+Both requests may read the balance as ₹10,000.
+
+|--------------------------------------------|
+A reads → ₹10,000
+B reads → ₹10,000
+
+A calculates → ₹10,000 - ₹3,000 = ₹7,000
+B calculates → ₹10,000 - ₹5,000 = ₹5,000
+|--------------------------------------------|
+
+If A writes ₹7,000 and B subsequently writes ₹5,000:
+
+Final Balance = ₹5,000 
+
+But the correct balance should be:
+
+₹10,000 - ₹3,000 - ₹5,000 = ₹2,000 
+
+This is an example of the Lost Update Problem, which can lead to data inconsistency.
+
+2. Lost Update Problem
+
+The Lost Update Problem happens when:
+
+a) Two transactions read the same data.
+b) Both modify the data independently.
+c) One transaction overwrites the changes made by the other.
+
+|--------------------------------------------|
+Typical flow
+Transaction A ── Read ₹10,000
+Transaction B ── Read ₹10,000
+       ↓
+A calculates ₹7,000
+B calculates ₹5,000
+       ↓
+A writes ₹7,000
+B writes ₹5,000
+       ↓
+Final = ₹5,000 
+|--------------------------------------------|
+
+The update made by A is effectively lost.
+
+3. Why Does This Problem Occur?
+
+A database operation is not always a single operation.
+
+It can involve:
+
+READ → MODIFY → WRITE
+
+For example:
+
+1. READ balance
+2. MODIFY balance
+3. WRITE updated balance
+
+Another request can execute between these operations, causing inconsistent results.
+
+4. Locking
+
+To control concurrent access, we can use locking mechanisms.
+
+Two common approaches are:
+
+1. Optimistic Locking
+2. Pessimistic Locking
+
+5. Optimistic Locking 
+
+Concept: Assume that conflicts are unlikely.
+
+The application does not immediately lock the record.
+
+Instead:
+
+READ → MODIFY → Check → WRITE
+
+Before writing, it checks whether another transaction has modified the data.
+
+If the data has changed:
+
+    Don't update
+    Throw/handle conflict
+
+If the data has not changed:
+
+   Perform update
+
+
+Version Column: Optimistic locking commonly uses a version column.
+
+Example:
+
+ID	Balance	Version
+1	₹10,000	1
+
+When a transaction reads the record:
+
+Balance = ₹10,000
+Version = 1
+
+The transaction remembers Version 1.
+
+After modifying the balance, it tries to update only if the version is still 1.
+
+UPDATE account
+SET balance = 7000,
+    version = 2
+WHERE id = 1
+  AND version = 1;
+
+If version is still 1
+|-----------------------------|
+Update succeeds
+Balance = ₹7,000
+Version = 2
+|-----------------------------|
+
+If another transaction already updated it
+|-----------------------------|
+Current Version = 2
+Expected Version = 1
+|-----------------------------|
+
+The WHERE version = 1 condition fails:
+
+ Update does not happen
+
+The application knows that another transaction has already modified the record.
+
+6. Optimistic Locking with JPA
+
+Spring Data JPA/JPA provides the @Version annotation.
+
+@Entity
+public class Account {
+
+    @Id
+    private Long id;
+
+    private BigDecimal balance;
+
+    @Version
+    private Long version;
+}
+
+The framework manages the version checking and incrementing automatically.
+
+Key Points:
+Assumes conflicts are rare.
+Doesn't lock the row during normal reading.
+Uses a version field to detect changes.
+Update fails if the version has changed.
+Good for applications where concurrent conflicts are relatively uncommon.
+
+7. Pessimistic Locking
+
+Concept: Assume that conflicts are likely.
+
+Instead of checking for a conflict later, the transaction locks the record before working with it.
+|-----------------------------|
+Typical flow:
+
+READ + LOCK
+      ↓
+MODIFY
+      ↓
+WRITE
+      ↓
+COMMIT
+      ↓
+UNLOCK
+|-----------------------------|
+While the record is locked, another transaction attempting to modify the same record must wait.
+
+8. SELECT ... FOR UPDATE
+
+At the database level, a common example is:
+
+SELECT *
+FROM account
+WHERE id = 1
+FOR UPDATE;
+
+FOR UPDATE requests a row lock.
+
+Conceptually:
+|-----------------------------|
+Transaction A
+     ↓
+SELECT ... FOR UPDATE
+     ↓
+Row locked 
+     ↓
+UPDATE
+     ↓
+COMMIT
+     ↓
+Row unlocked 
+|-----------------------------|
+If Transaction B tries to work with the same locked row, it may have to wait until Transaction A releases the lock.
+
+9. Real-World Example – ATM
+
+Think of an ATM.
+|-----------------------------|
+User A → Using ATM
+          
+
+User B → Waits
+       
+
+User A → Finishes
+          
+
+User B → Can use ATM
+|-----------------------------|
+This is similar to the basic idea of pessimistic locking:
+
+Lock the resource first, perform the operation, commit, and then release the lock.
+
+10. Optimistic vs Pessimistic Locking
+
+| Feature            | Optimistic             | Pessimistic                |
+| ------------------ | ---------------------- | -------------------------- |
+| Assumption         | Conflict is unlikely   | Conflict is likely         |
+| Lock immediately?  |   No                   |   Yes                      |
+| Conflict detection | At update time         | By locking                 |
+| Common mechanism   | Version column         | Database row lock          |
+| JPA                |  @Version              |  @Lock(PESSIMISTIC_WRITE)  |
+| Other transaction  | Can read               | May have to wait           |
+| Concurrency        | Generally higher       | Generally lower            |
+| Best suited for    | Low-conflict scenarios | High-conflict scenarios    |
