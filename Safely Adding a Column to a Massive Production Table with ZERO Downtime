@@ -1,0 +1,141 @@
+Safely Adding a Column to a Massive Production Table with ZERO Downtime
+
+Scenario:
+You need to add a new column to a database table containing 300 million rows. The table is being continuously read from and written to by users in a production application running 24/7.
+You cannot take the database offline, and you cannot afford any downtime.
+How would you safely add the new column without impacting the production application?
+
+The Approach to Avoid:
+If your first instinct is to add the column and immediately update all 300 million rows in one giant transaction — stop right there! 
+
+ALTER TABLE users
+ADD COLUMN plan TEXT;
+
+UPDATE users
+SET plan = 'free';
+
+updating 300,000,000 rows ...
+
+A transaction that large will lock a massive number of rows. 
+With those rows locked, your live traffic will have to wait for the lock to be released, inevitably causing the one thing you are trying to avoid: downtime.
+
+Production Approach: Instead of one large migration, break the change into small, safe stages.
+
+Stage 1: Add the New Column as Nullable
+
+First, add the new column as nullable and without a default value.
+
+ALTER TABLE users
+ADD COLUMN plan TEXT NULL;
+
+Why Nullable?
+For many modern databases, adding a nullable column can be primarily a metadata/schema change, meaning the database does not necessarily need to physically rewrite every existing row just to add the column.
+
+The existing 300 million rows can therefore remain untouched initially.
+
+Conceptually:
+
+Before:
+
+id | name | age
+---|------|----
+1  | John | 30
+2  | Mike | 25
+
+
+After:
+
+id | name | age | plan
+---|------|-----|------
+1  | John | 30  | NULL
+2  | Mike | 25  | NULL
+
+The new column exists, but historical records have no value yet.
+
+Stage 2: Fix New Writes First
+
+This is a critical part of the migration.
+
+The application is continuously receiving new requests:
+
+|--------------------------------------|
+Users → Application → Database
+             ↑
+          24/7 writes
+|--------------------------------------|
+
+If you start backfilling old rows before fixing new writes, new records may continue to arrive with:
+
+plan = NULL
+
+So the backlog can continue growing.
+
+Solution: Update the application logic first.
+
+The new application should populate the new column whenever a new record is created.
+|--------------------------------------|
+New Application
+      ↓
+name + age + plan
+      ↓
+Database
+|--------------------------------------|
+
+For example:
+
+INSERT INTO users (name, age, plan)
+VALUES ('John', 30, 'free');
+
+Then deploy the new application.
+
+After deployment:
+|--------------------------------------|
+OLD DATA
+300M existing rows
+        ↓
+   plan may be NULL
+
+
+NEW DATA
+New rows
+        ↓
+   plan populated
+|--------------------------------------|
+Now the migration only needs to deal with the historical backlog.
+
+Stage 3: Backfill Old Data
+
+Now populate the new column for existing records.
+
+Don't do:
+UPDATE users
+SET plan = 'free';
+
+for all 300 million rows in one transaction.
+
+Use Batch Processing: Run a background job that fills the new column for historical rows in small batches (e.g., a few thousand rows at a time). 
+|--------------------------------------|
+300 Million Rows
+       ↓
+Batch 1 → Few thousand
+       ↓
+Batch 2 → Few thousand
+       ↓
+Batch 3 → Few thousand
+       ↓
+...
+       ↓
+All historical rows updated
+|--------------------------------------|
+
+Example:
+
+UPDATE users
+SET plan = 'free'
+WHERE id >= 1
+  AND id < 5000
+  AND plan IS NULL;
+
+Then process the next batch.
+
+After each batch, briefly pause and check your database load. If the load gets too high, pause the processing and wait for it to stabilize before starting the next batch.
