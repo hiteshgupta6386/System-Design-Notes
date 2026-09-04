@@ -1,0 +1,204 @@
+Push Notifications vs Polling for 50 Million Users
+
+Scenario:
+An application has 50 million users, and the marketing team wants to notify all users about a flash sale.
+Would you use polling to notify users, or would you use push notifications such as Firebase Cloud Messaging (FCM)?
+
+And if you choose FCM: Would you really send 50 million separate messages?
+
+
+
+1. Polling Approach: In polling, the client initiates communication with the server.
+
+Every user's application periodically asks:
+
+"Is the flash sale live yet?"
+
+For example, every 20 seconds:
+|-------------------------------|
+User App
+   ↓
+Server: Is sale live?
+   ↓
+No
+   ↓
+Wait 20 seconds
+   ↓
+Ask again
+|-------------------------------|
+
+Scale Calculation:
+
+There are: 50 million users
+
+Each user polls every: 20 seconds
+
+Therefore:
+
+50,000,000 / 20
+= 2,500,000 requests/second
+
+That's approximately:
+
+2.5 million requests per second
+
+And most responses will simply be:
+
+"No, the sale is not live yet."
+
+So the infrastructure is handling a huge number of requests just to repeatedly answer "No."
+
+Additional Problem:
+The application needs to perform background work to continue polling, which can result in:
+Increased battery consumption
+Unnecessary network usage
+Massive server load
+Large number of unnecessary requests
+
+
+2. Push Notification Approach:
+With push notifications, the server initiates the notification through a push-notification service.
+
+Common services include:
+a) Firebase Cloud Messaging (FCM)
+b) Apple Push Notification service (APNs)
+
+Instead of every phone repeatedly asking: "Is the sale live?"
+
+the server sends a notification when the sale actually starts.
+
+3. How FCM Works: For Android devices, the device maintains communication with Google's infrastructure through Google Play services.
+
+Conceptually:
+|------------------------------------------------|
+              Your Backend
+                   |
+                   ↓
+                  FCM
+                   |
+        ┌──────────┼──────────┐
+        ↓          ↓          ↓
+      Phone 1    Phone 2    Phone 3
+|------------------------------------------------|
+
+
+When the flash sale starts:
+|------------------------------------------------|
+Your Server
+     ↓
+    FCM
+     ↓
+Android Devices
+|------------------------------------------------|
+
+FCM handles delivery to the subscribed devices.
+
+4. Do We Send 50 Million Messages?
+
+This is the important discussion.
+
+A naive implementation might attempt:
+|----------------------------------------|
+50 Million Users
+       ↓
+50 Million API Calls
+       ↓
+FCM
+|----------------------------------------|
+That would be unnecessarily expensive and operationally complicated from the application side.
+
+Instead, use topic-based messaging / publish-subscribe architecture.
+
+5. Topic-Based Messaging:
+
+Create a topic: flash-sale
+
+Users who want these notifications subscribe to the topic:
+
+User 1 ──┐
+User 2 ──┤
+User 3 ──┤
+User 4 ──┤
+   ...   ├──→ flash-sale topic
+User 50M ┘
+
+When the sale starts, your backend publishes one message to the topic:
+|----------------------------------------|
+Your Backend
+     ↓
+flash-sale topic
+     ↓
+    FCM
+     ↓
+Fan-out
+     ↓
+Millions of subscribed devices
+|----------------------------------------|
+FCM handles the fan-out to the subscribers.
+
+Key Idea: Don't make your application individually notify 50 million devices. Use topic-based messaging so the push infrastructure performs the fan-out.
+
+6. High-Priority Messages   
+
+For a time-sensitive notification such as a flash sale, the source recommends considering high priority.
+
+A normal-priority notification may be delayed while the device is conserving battery or otherwise deferring background activity.
+|----------------------------------------|
+Normal Priority
+      ↓
+May be delayed
+      ↓
+Battery optimization
+|----------------------------------------|
+Whereas a high-priority message is intended for more time-sensitive delivery.
+
+Priority behavior and limits are platform/provider dependent, so high priority should be used appropriately rather than for every notification.
+
+7. Push Notification Does NOT Guarantee Delivery
+
+Push notification delivery is not guaranteed.
+
+For example:
+|----------------------------------------------------|
+Phone Offline
+     ↓
+Notification cannot be delivered immediately
+|----------------------------------------------------|
+
+The push service may retain the message for some period and attempt delivery later, depending on its delivery rules.
+
+But for a flash sale, receiving the notification after the sale has ended is useless.
+
+Therefore, configure an appropriate TTL (Time To Live).
+|----------------------------------------------------|
+Flash Sale Notification
+        ↓
+Short TTL
+        ↓
+Sale expires
+        ↓
+Notification expires
+|----------------------------------------------------|
+If the device remains unavailable beyond the TTL, the message can be discarded rather than delivered too late.
+
+8. The Real Scaling Problem
+
+Sending the notification is not necessarily the biggest problem.
+
+The bigger problem can start immediately after users receive it.
+
+Imagine:
+|----------------------------------------------------|
+50 Million Users
+       ↓
+Notification
+       ↓
+FLASH SALE LIVE
+       ↓
+Millions tap simultaneously
+       ↓
+Your Backend
+|----------------------------------------------------|
+
+Suddenly, millions of users may attempt to access the application.
+This can lead to a massive traffic spike.
