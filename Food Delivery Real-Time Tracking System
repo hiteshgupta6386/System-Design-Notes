@@ -1,0 +1,200 @@
+Food Delivery Real-Time Tracking System
+
+Problem Statement:
+When a user tracks a food delivery on platforms like Swiggy or Zomato, the delivery partner's location appears to move on the map in near real time.
+
+
+1. This is not simply a GPS + Map problem. It is a real-time location streaming system involving three major components:
+
+Delivery Partner's Phone
+Backend Server
+Customer's Phone
+
+The system continuously collects, processes, and pushes location updates with low latency.
+
+2. High-Level Architecture
+
+|----------------------------------------------------------|
+Delivery Partner Phone
+        |
+        | GPS Location
+        | Every 3–4 seconds
+        v
+   Backend Server
+        |
+        | Update latest location
+        v
+      Redis
+        |
+        | Real-time push
+        v
+   WebSocket Connection
+        |
+        v
+   Customer Phone
+        |
+        v
+   Moving Rider on Map
+|----------------------------------------------------------|
+
+3. How Does Real-Time Tracking Work?
+
+Step 1: Delivery Partner's Phone Gets GPS Location
+The delivery partner's mobile application continuously obtains the device's GPS coordinates.
+
+For example:
+Latitude  = 28.6139
+Longitude = 77.2090
+
+The application periodically sends the latest location to the backend.
+
+Typically:
+Every 3–4 seconds
+
+The exact interval can vary depending on the application's implementation, battery optimization, network conditions, and whether the rider is actively navigating.
+
+Step 2: Backend Receives the Location
+
+The backend receives the location update.
+
+Example:
+
+{
+  "orderId": "ORD123",
+  "latitude": 28.6139,
+  "longitude": 77.2090,
+  "timestamp": 1690000000
+}
+
+The important point is that we don't necessarily persist every GPS coordinate in the primary database.
+
+4. Why Not Store Every Location in Database?
+
+Imagine:
+
+10 million active deliveries
+×
+1 location update every 3 seconds
+
+This can generate a huge number of writes.
+
+If every GPS update were written directly to a relational database, it could cause database overload and unnecessary historical data.
+
+For live tracking, we primarily need the latest location, not every previous location.
+
+
+5. Why Redis?
+Redis is an in-memory data store that provides very fast reads and writes.
+
+We can maintain the latest location like:
+
+Key:
+order:ORD123:location
+
+Value:
+{
+   latitude: 28.6139,
+   longitude: 77.2090
+}
+
+When a new location arrives:
+|--------------------------------|
+Old Location
+     ↓
+Redis
+     ↓
+Replace with
+     ↓
+New Location
+|--------------------------------|
+So Redis acts as a fast temporary state store for active delivery locations.
+
+Key idea : Redis stores the latest live location; the database is not used as the primary store for every live GPS update.
+
+6. How Does the Customer Phone Get Updates?
+
+There are two common approaches.
+
+Approach 1: Polling
+
+The customer application repeatedly asks:
+|---------------------------------------------|
+Where is the delivery partner?
+
+Where is the delivery partner?
+
+Where is the delivery partner?
+|---------------------------------------------|
+
+For example:
+|---------------------------------------------|
+Customer → Backend
+"Give me latest location"
+
+Backend → Customer
+"Here is the location"
+|---------------------------------------------|
+This is called polling.
+
+It creates unnecessary requests because the customer keeps asking even when the location hasn't changed.
+
+7. WebSocket Approach
+For real-time tracking, a WebSocket connection is a better fit.
+
+The customer establishes a persistent connection:
+|---------------------------------------------|
+Customer App
+     |
+     | WebSocket Connection
+     |
+     v
+Backend
+|---------------------------------------------|
+
+Once connected, the backend can push location updates to the customer whenever new data arrives.
+
+Example:
+|---------------------------------------------|
+Rider Phone
+     |
+     | Location Update
+     v
+Backend
+     |
+     | Update Redis
+     |
+     | Push via WebSocket
+     v
+Customer Phone
+|---------------------------------------------|
+
+
+The customer doesn't have to repeatedly ask:
+
+"Where is the rider?"
+
+Instead, the server pushes updates.
+
+8. What Happens When the Order Is Completed?
+
+During the active delivery:
+
+GPS → Backend → Redis → WebSocket → Customer
+
+Once the order is delivered, the application may persist relevant delivery information into a durable database for:
+|---------------------------------------------|
+Order history
+Analytics
+Auditing
+Reporting
+Delivery metrics
+|---------------------------------------------|
+
+The live location state can then expire from Redis.
+
+Redis TTL can be used:
+
+order:ORD123:location
+TTL = X minutes
+
+This prevents stale locations from remaining indefinitely.
