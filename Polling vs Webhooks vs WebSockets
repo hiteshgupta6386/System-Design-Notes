@@ -1,0 +1,86 @@
+Polling vs Webhooks vs WebSockets
+
+1. Quick Overview
+
+| Approach  | How It Works                                                    | Communication   |
+| --------- | --------------------------------------------------------------  | --------------- |
+| Polling   | client asks the server repeatedly for updates.                  | Client → Server |
+| Webhook   | server notifies your app when an event happens.                 | Server → Client |
+| WebSocket | persistent two-way connection for real-time.                    | Two-way         |
+
+2. Polling
+How it works
+
+Client asks the server repeatedly every few seconds.
+
+|----------------------------------|
+Client → Server: Any update?
+Client → Server: Any update?
+Client → Server: Any update?
+|----------------------------------|
+
+Examples:
+Order status refresh
+Job/task status checking
+
+When to use: 
+Simple to implement,
+but can waste requests
+and server resources.
+
+3. Webhooks
+How it works
+
+Server calls your endpoint when a event occurs
+
+|----------------------------------|
+Event Happens
+     ↓
+Server
+     ↓
+HTTP POST
+     ↓
+Client's Webhook URL
+|----------------------------------|
+
+Examples:
+Payment success notification
+GitHub push/issue events
+Stripe payment/subscription events
+Third-party system notifications
+
+When to use: 
+Event-driven & efficient.
+Needs public endpoint, auth/
+security, and retries handling.
+
+4. WebSockets
+How it works
+
+A persistent connection is established between client and server.
+
+|----------------------------------|
+Client ←────────────→ Server
+       Persistent
+       Connection
+|----------------------------------|
+
+Both sides can send messages at any time.
+
+Examples:
+Chat applications
+Live dashboards
+Multiplayer games
+Live delivery/location tracking
+
+When to use:
+When you need live,
+interactive updates in
+both directions. More
+complex to build and manage.
+
+5. Quick Decision
+
+Need simple periodic check?                  --------- >    Use POLLING
+Need server-to-server event notification?    --------- >    Use WEBHOOK
+Need live two-way communication?             --------- >    Use WEBSOCKET
