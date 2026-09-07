@@ -1,0 +1,87 @@
+How would you update stock prices in real time without refreshing the page?
+
+Problem Statement:
+A stock trading application displays live stock prices.
+
+For example:
+₹1,250 → ₹1,251 → ₹1,249 → ₹1,252
+
+The price changes continuously, and users expect the application to update the price instantly without refreshing the screen.
+
+Answer:
+use WebSockets for real-time price updates. The client establishes a persistent WebSocket connection with the server. 
+When the stock price changes, the server pushes the latest price through the existing connection, 
+so the client can update the UI immediately without polling or refreshing the page.
+
+
+1. Polling:
+
+One simple approach is Polling.
+
+The client periodically sends a request to the server:
+
+Client → Server: Has the price changed?
+Server → Client: No
+
+Wait...
+
+Client → Server: Has the price changed?
+Server → Client: No
+
+Wait...
+
+Client → Server: Has the price changed?
+Server → Client: Yes, ₹1,251
+
+Problem with Polling:  
+Most requests may happen when nothing has changed.
+
+For example, if the application checks every 2 seconds:
+
+Request → No change
+Request → No change
+Request → No change
+Request → No change
+Request → Price changed
+
+This creates unnecessary network traffic and server load.
+
+The problem becomes much bigger when millions of users are polling continuously.
+
+2. WebSockets:
+WebSocket provides a better approach for real-time communication.
+
+Instead of repeatedly asking the server, the client establishes a persistent connection with the server.
+
+Client ⇄ Server
+       │
+       │ Persistent Connection
+       │
+       ▼
+   Connection stays open
+
+
+Once the connection is established, both client and server can send data whenever required.
+
+When the stock price changes, the server does not have to wait for the client to ask.
+
+It can immediately push the new price:
+
+Server → Client: ₹1,250
+Server → Client: ₹1,251
+Server → Client: ₹1,249
+Server → Client: ₹1,252
+
+The UI can then update the displayed price immediately.
+
+3. Why WebSockets Are Useful:
+WebSockets are useful when an application needs continuous, real-time updates.
+
+Common use cases include:
+Stock trading applications
+Chat applications
+Multiplayer games
+Live location tracking
+Real-time dashboards
+Live notifications
+Real-time data displays
