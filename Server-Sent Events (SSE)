@@ -46,3 +46,7 @@ Server ─────────────────► Client
 WebSocket
 Server ◄────────────────► Client
        Two-way
+
+
+For example, a live stock-price dashboard that only receives price updates can use SSE, 
+while a trading application that needs continuous two-way communication may prefer WebSockets.
