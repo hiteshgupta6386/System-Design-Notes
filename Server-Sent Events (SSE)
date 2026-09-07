@@ -1,0 +1,48 @@
+Server-Sent Events (SSE): A one-way connection where the server continuously pushes updates to the client. Ideal for live dashboards, news feeds, notifications, and monitoring systems.
+
+How it works:
+
+|--------------------------------------------------|
+
+Client                         Server
+  │                              │
+  │──── HTTP Request ───────────►│
+  │      Open SSE Connection     │
+  │                              │
+  │◄──── Event / Update ─────────│
+  │◄──── Event / Update ─────────│
+  │◄──── Event / Update ─────────│
+  │◄──── Event / Update ─────────│
+  │                              │
+
+|--------------------------------------------------|
+
+he connection remains open, allowing the server to send new events whenever data changes.
+
+Key Characteristics:
+One-way communication: Server → Client
+Uses a persistent HTTP connection
+Supports real-time updates
+Suitable for continuous event streams
+
+Common Use Cases:
+Real-time dashboards
+Live news feeds
+Notifications
+Monitoring systems
+Live status updates
+Live scores
+Streaming server-side events
+
+
+SSE vs WebSocket:
+
+
+SSE
+Server ─────────────────► Client
+       One-way
+
+
+WebSocket
+Server ◄────────────────► Client
+       Two-way
