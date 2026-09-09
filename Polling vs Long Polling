@@ -1,0 +1,91 @@
+Polling vs Long Polling
+
+1. Polling (Short Polling)
+Polling is the simplest approach to getting updates from a server. The client sends requests to the server at regular intervals, checking if anything has changed.
+
+Think of it like refreshing your email inbox every few minutes to check for new messages.
+
+How It Works:
+a) Client sends an HTTP request to the server
+b) Server responds immediately with current data (or empty response)
+c) Client waits for a fixed interval (e.g., 5 seconds)
+d) Client sends another request
+e) Repeat indefinitely
+
+|----------------------------------------------|
+
+Client                         Server
+  │                              │
+  │──── GET /api/updates ───────►│
+  │◄──── {"updates": []} ────────│
+  │                              │
+  │       Wait 5 seconds         │
+  │                              │
+  │──── GET /api/updates ───────►│
+  │◄──── {"updates": []} ────────│
+  │                              │
+  │       Wait 5 seconds         │
+  │                              │
+  │──── GET /api/updates ───────►│
+  │◄── {"updates":[{"id":1,...}]}│
+  │                              │
+  │       Wait 5 seconds         │
+  │                              │
+  │──── GET /api/updates ───────►│
+  │◄──── {"updates": []} ────────│
+
+|----------------------------------------------|
+
+Notice something wasteful here? The client keeps asking even when nothing has changed. Three out of four requests in this diagram returned empty responses.
+
+In real applications, this ratio is often much worse. You might make 100 requests before getting a single meaningful update.
+
+Short polling can be used for:
+Weather data
+Periodic reports
+Batch job status
+
+
+2. Long Polling
+Long polling improves on regular polling by having the server hold the request open until new data is available (or a timeout occurs). 
+Instead of the client repeatedly asking “anything new?”, the server waits and responds only when there’s something to report.
+
+This was the technique that powered early real-time applications like Facebook Messenger before WebSockets became widely supported.
+
+How It Works:
+a) Client sends an HTTP request to the server
+b) Server holds the connection open (doesn’t respond immediately)
+c) When new data arrives, server sends the response
+d) Client immediately sends another request
+e) If no data arrives within the timeout period, server sends an empty response and client reconnects
+
+|----------------------------------------------|
+
+Client                         Server
+  │                              │
+  │──── GET /api/updates?since=12345 ────►│
+  │                              │
+  │                              │ Holding connection open...
+  │                              │ Waiting for new data...
+  │                              │ 15 seconds pass...
+  │                              │ New data arrives...
+  │◄──── {"updates": [{"id": 12346, "message": "Hello!"}]} ────│
+  │                              │
+  │──── GET /api/updates?since=12346 ────►│
+  │                              │
+  │                              │ Holding connection open...
+  │                              │ Waiting for new data...
+  │                              │ 30 seconds pass, timeout
+  │◄──── {"updates": []} ────────│
+  │                              │
+  │──── GET /api/updates?since=12346 ────►│
+  │                              │
+  │                              │ Holding connection open...
+  │                              │
+
+|----------------------------------------------|
+
+Long polling can be used for:
+Legacy chat applications
+Real-time notifications
+Systems where WebSockets aren't available or practical
