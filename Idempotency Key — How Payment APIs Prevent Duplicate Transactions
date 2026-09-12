@@ -1,0 +1,135 @@
+Idempotency Key — How Payment APIs Prevent Duplicate Transactions
+
+
+Question:
+How do you prevent duplicate payments when a user retries the payment API?
+
+Answer:
+We use an Idempotency Key for the payment request. The client generates a unique UUID for each logical payment attempt and sends it with the request. 
+The backend checks whether this key has already been processed. If it is a new key, the payment is processed and the result is stored against that key. 
+If the same key is received again because of a retry, timeout, network failure, or double-click, the backend does not create another payment; 
+instead, it returns the previously stored result. 
+
+1. Problem: Duplicate Payment
+When a user clicks Pay Now, the backend processes a payment.
+
+The response may fail to reach the client because of:
+Slow network
+Network timeout
+Internet disconnect
+Mobile/device shutdown
+Browser refresh
+App crash
+Gateway timeout
+Reverse proxy retry
+Load balancer retry
+Accidental double-click
+
+The user may retry the payment.
+If the API creates a new payment for every request, the customer can be charged multiple times.
+
+2. What is Idempotency?
+
+An operation is idempotent when performing it multiple times with the same input produces the same result/effect.
+Repeating the operation does not create a different effect.
+
+
+3. HTTP Methods and Idempotency
+
+| HTTP Method | Idempotent?  |                    Reason                              |
+| ----------- | ------------ | ------------------------------------------------------ |
+| GET         |     Yes      | Repeated GET fetches the same resource                 |
+| PUT         |     Yes      | Repeated update with same data produces same state     |
+| DELETE      |     Yes      | Repeated DELETE leaves resource deleted                |
+| POST        | Generally No | Each request can create a new resource                 |
+
+
+Example: POST
+
+POST /users
+
+{
+  "name": "Aman"
+}
+
+Calling this multiple times can create:
+
+User 1 → Aman
+User 2 → Aman
+User 3 → Aman
+
+Therefore, POST is generally non-idempotent.
+
+4. Idempotency Key
+To make a payment POST request safely retryable, the client sends a unique Idempotency Key with the request.
+
+Usually, the key is generated using a UUID.
+
+POST /payments
+
+Idempotency-Key: 550e8400-e29b-41d4-a716-446655440000
+
+Request body:
+
+{
+  "amount": 1000,
+  "currency": "INR",
+  "userId": "U123"
+}
+
+
+Important: One logical payment attempt = one unique Idempotency Key.
+
+If the client retries the same payment, it should reuse the same key.
+A new payment attempt should get a new key.
+
+5. How Idempotency Prevents Duplicate Payments
+
+First Request
+| ------------------------------------------------------ |
+Client
+   │
+   │ POST /payments
+   │ Idempotency-Key: UUID-123
+   ▼
+Backend
+   │
+   │ Check UUID-123
+   ▼
+Database
+   │
+   │ Key NOT FOUND
+   ▼
+Process Payment
+   │
+   ▼
+Save Payment + Idempotency Key
+   │
+   ▼
+Return SUCCESS
+| ------------------------------------------------------ |
+
+The backend stores information associated with the key.
+
+Example:
+
+Key: UUID-123
+Status: SUCCESS
+PaymentId: P1001
+Response: Payment Successful
+
+6. What Happens During Retry?
+Suppose the payment succeeded but the response never reached the client.
+
+The user clicks Pay Now again.
+
+The client sends:
+Idempotency-Key: UUID-123
+
+The backend checks the database.
+UUID-123 → FOUND
+
+Therefore:
+Do NOT create another payment
+Do NOT charge the customer again
+Return the previous payment result
